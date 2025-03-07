@@ -2,14 +2,28 @@
 
 from abc import abstractmethod
 from functools import cached_property
-from typing import (Final, Iterable, List, Literal, Mapping, Optional,
-                    Protocol, Set, Tuple, TypedDict, TypeVar, Union)
+from typing import (
+    Final,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Protocol,
+    Set,
+    Tuple,
+    TypedDict,
+    TypeVar,
+    Union,
+)
 
 import torch
 import torch.nn as nn
 from transformers import BatchFeature, LlavaNextConfig, LlavaNextProcessor
 from transformers.models.llava_next.modeling_llava_next import (
-    get_anyres_image_grid_shape, unpad_image)
+    get_anyres_image_grid_shape,
+    unpad_image,
+)
 from typing_extensions import NotRequired
 
 from vllm.config import VllmConfig
@@ -22,12 +36,22 @@ from vllm.sequence import IntermediateTensors
 
 from .clip import CLIPVisionModel
 from .interfaces import SupportsMultiModal, SupportsPP
-from .llava import (BaseLlavaMultiModalProcessor, BaseLlavaProcessingInfo,
-                    LlavaDummyInputsBuilder, LlavaLikeConfig,
-                    LlavaMultiModalProjector, init_vision_tower_for_llava)
+from .llava import (
+    BaseLlavaMultiModalProcessor,
+    BaseLlavaProcessingInfo,
+    LlavaDummyInputsBuilder,
+    LlavaLikeConfig,
+    LlavaMultiModalProjector,
+    init_vision_tower_for_llava,
+)
 from .siglip import SiglipVisionModel
-from .utils import (AutoWeightsLoader, embed_multimodal, flatten_bn,
-                    init_vllm_registered_model, maybe_prefix)
+from .utils import (
+    AutoWeightsLoader,
+    embed_multimodal,
+    flatten_bn,
+    init_vllm_registered_model,
+    maybe_prefix,
+)
 
 
 class LlavaNextImagePixelInputs(TypedDict):
@@ -58,8 +82,9 @@ class LlavaNextImageEmbeddingInputs(TypedDict):
     """
 
 
-LlavaNextImageInputs = Union[LlavaNextImagePixelInputs,
-                             LlavaNextImageEmbeddingInputs]
+LlavaNextImageInputs = Union[
+    LlavaNextImagePixelInputs, LlavaNextImageEmbeddingInputs
+]
 
 
 class LlavaNextLikeConfig(LlavaLikeConfig, Protocol):
@@ -67,7 +92,6 @@ class LlavaNextLikeConfig(LlavaLikeConfig, Protocol):
 
 
 class LlavaNextProcessingInfo(BaseLlavaProcessingInfo):
-
     def get_hf_config(self) -> LlavaNextLikeConfig:
         return self.ctx.get_hf_config(LlavaNextConfig)
 
@@ -153,13 +177,13 @@ class LlavaNextProcessingInfo(BaseLlavaProcessingInfo):
         hf_config = self.get_hf_config()
 
         largest_feature_size, largest_feature_pinpoint = 0, None
-        for (height, width) in hf_config.image_grid_pinpoints:
-            feat_size = self.get_num_image_tokens(image_width=width,
-                                                  image_height=height)
+        for height, width in hf_config.image_grid_pinpoints:
+            feat_size = self.get_num_image_tokens(
+                image_width=width, image_height=height
+            )
             if feat_size > largest_feature_size:
                 largest_feature_size = feat_size
-                largest_feature_pinpoint = ImageSize(width=width,
-                                                     height=height)
+                largest_feature_pinpoint = ImageSize(width=width, height=height)
 
         if largest_feature_size == 0 or largest_feature_pinpoint is None:
             raise ValueError("Cannot have a largest feature size of 0!")
@@ -171,7 +195,6 @@ _I = TypeVar("_I", bound=LlavaNextProcessingInfo)
 
 
 class BaseLlavaNextMultiModalProcessor(BaseLlavaMultiModalProcessor[_I]):
-
     # Copied from BaseMultiModalProcessor
     @abstractmethod
     def _get_mm_fields_config(
@@ -183,8 +206,8 @@ class BaseLlavaNextMultiModalProcessor(BaseLlavaMultiModalProcessor[_I]):
 
 
 class LlavaNextMultiModalProcessor(
-        BaseLlavaNextMultiModalProcessor[LlavaNextProcessingInfo]):
-
+    BaseLlavaNextMultiModalProcessor[LlavaNextProcessingInfo]
+):
     def _get_mm_fields_config(
         self,
         hf_inputs: BatchFeature,
@@ -197,12 +220,14 @@ class LlavaNextMultiModalProcessor(
         )
 
 
-@MULTIMODAL_REGISTRY.register_processor(LlavaNextMultiModalProcessor,
-                                        info=LlavaNextProcessingInfo,
-                                        dummy_inputs=LlavaDummyInputsBuilder)
-class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
-                                        SupportsPP):
-
+@MULTIMODAL_REGISTRY.register_processor(
+    LlavaNextMultiModalProcessor,
+    info=LlavaNextProcessingInfo,
+    dummy_inputs=LlavaDummyInputsBuilder,
+)
+class LlavaNextForConditionalGeneration(
+    nn.Module, SupportsMultiModal, SupportsPP
+):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
         config = vllm_config.model_config.hf_config
@@ -217,12 +242,14 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         # Used for multimodal granite models to control encoder outputs
         elif isinstance(vision_feature_layer, (list, tuple)):
             vision_hidden_size = config.vision_config.hidden_size * len(
-                vision_feature_layer)
+                vision_feature_layer
+            )
             self.feature_sample_layers = vision_feature_layer
         else:
             raise TypeError(
                 f"vision_layer_feature type: {type(vision_feature_layer)}"
-                " is not supported")
+                " is not supported"
+            )
 
         self.config = config
         self.multimodal_config = multimodal_config
@@ -232,14 +259,17 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
             config,
             quant_config,
             require_post_norm=False,
-            prefix=maybe_prefix(prefix, "vision_tower"))
+            prefix=maybe_prefix(prefix, "vision_tower"),
+        )
         self.image_newline = nn.Parameter(
-            torch.empty(config.text_config.hidden_size))
+            torch.empty(config.text_config.hidden_size)
+        )
         self.multi_modal_projector = LlavaMultiModalProjector(
             vision_hidden_size=vision_hidden_size,
             text_hidden_size=config.text_config.hidden_size,
             projector_hidden_act=config.projector_hidden_act,
-            multimodal_projector_bias=config.multimodal_projector_bias)
+            multimodal_projector_bias=config.multimodal_projector_bias,
+        )
 
         self.language_model = init_vllm_registered_model(
             vllm_config=vllm_config,
@@ -248,7 +278,8 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         )
 
         self.make_empty_intermediate_tensors = (
-            self.language_model.make_empty_intermediate_tensors)
+            self.language_model.make_empty_intermediate_tensors
+        )
 
     @cached_property
     def sampler(self):
@@ -258,7 +289,7 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         return get_sampler()
 
     def _validate_image_sizes(self, data: torch.Tensor) -> torch.Tensor:
-        expected_dims = (2, )
+        expected_dims = (2,)
 
         def _validate_shape(d: torch.Tensor):
             actual_dims = tuple(d.shape)
@@ -267,7 +298,8 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
                 expected_expr = str(expected_dims)
                 raise ValueError(
                     f"The expected shape of image sizes per image per batch "
-                    f"is {expected_expr}. You supplied {tuple(d.shape)}.")
+                    f"is {expected_expr}. You supplied {tuple(d.shape)}."
+                )
 
         for d in data:
             _validate_shape(d)
@@ -277,7 +309,6 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
     def _validate_pixel_values(
         self, data: Union[torch.Tensor, List[torch.Tensor]]
     ) -> Union[torch.Tensor, List[torch.Tensor]]:
-
         h = w = self.config.vision_config.image_size
         expected_dims = (3, h, w)
 
@@ -288,7 +319,8 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
                 expected_expr = ("num_patches", *map(str, expected_dims))
                 raise ValueError(
                     "The expected shape of pixel values per image per batch "
-                    f"is {expected_expr}. You supplied {tuple(d.shape)}.")
+                    f"is {expected_expr}. You supplied {tuple(d.shape)}."
+                )
 
         for d in data:
             _validate_shape(d)
@@ -296,7 +328,8 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         return data
 
     def _parse_and_validate_image_input(
-            self, **kwargs: object) -> Optional[LlavaNextImageInputs]:
+        self, **kwargs: object
+    ) -> Optional[LlavaNextImageInputs]:
         pixel_values = kwargs.pop("pixel_values", None)
         image_sizes = kwargs.pop("image_sizes", None)
         image_embeds = kwargs.pop("image_embeds", None)
@@ -306,24 +339,31 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
 
         if pixel_values is not None:
             if not isinstance(pixel_values, (torch.Tensor, list)):
-                raise ValueError("Incorrect type of pixel values. "
-                                 f"Got type: {type(pixel_values)}")
+                raise ValueError(
+                    "Incorrect type of pixel values. "
+                    f"Got type: {type(pixel_values)}"
+                )
 
             if not isinstance(image_sizes, (torch.Tensor, list)):
-                raise ValueError("Incorrect type of image sizes. "
-                                 f"Got type: {type(image_sizes)}")
+                raise ValueError(
+                    "Incorrect type of image sizes. "
+                    f"Got type: {type(image_sizes)}"
+                )
 
             return LlavaNextImagePixelInputs(
                 type="pixel_values",
                 data=self._validate_pixel_values(flatten_bn(pixel_values)),
                 image_sizes=self._validate_image_sizes(
-                    flatten_bn(image_sizes, concat=True)),
+                    flatten_bn(image_sizes, concat=True)
+                ),
             )
 
         if image_embeds is not None:
             if not isinstance(image_embeds, torch.Tensor):
-                raise ValueError("Incorrect type of image embeds. "
-                                 f"Got type: {type(image_embeds)}")
+                raise ValueError(
+                    "Incorrect type of image embeds. "
+                    f"Got type: {type(image_embeds)}"
+                )
 
             return LlavaNextImageEmbeddingInputs(
                 type="image_embeds",
@@ -332,8 +372,9 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
 
         raise AssertionError("This line should be unreachable.")
 
-    def _select_image_features(self, image_features: torch.Tensor, *,
-                               strategy: str) -> torch.Tensor:
+    def _select_image_features(
+        self, image_features: torch.Tensor, *, strategy: str
+    ) -> torch.Tensor:
         # Copied from https://github.com/huggingface/transformers/blob/39c3c0a72af6fbda5614dde02ff236069bb79827/src/transformers/models/llava/modeling_llava.py#L421  # noqa
         if strategy == "default":
             return image_features[:, 1:]
@@ -347,11 +388,11 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         vision_tower: Union[CLIPVisionModel, SiglipVisionModel],
         pixel_values: torch.Tensor,
     ) -> torch.Tensor:
-
         # NOTE: we skip the step to select the vision feature layer since
         # this is already done inside the vision tower
         image_features = vision_tower(
-            pixel_values, feature_sample_layers=self.feature_sample_layers)
+            pixel_values, feature_sample_layers=self.feature_sample_layers
+        )
 
         return self._select_image_features(
             image_features,
@@ -359,21 +400,28 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         )
 
     # Based on: https://github.com/haotian-liu/LLaVA/blob/main/llava/model/llava_arch.py
-    def _merge_image_patch_embeddings(self, image_size: torch.Tensor,
-                                      patch_embeddings: torch.Tensor, *,
-                                      strategy: str) -> torch.Tensor:
+    def _merge_image_patch_embeddings(
+        self,
+        image_size: torch.Tensor,
+        patch_embeddings: torch.Tensor,
+        *,
+        strategy: str,
+    ) -> torch.Tensor:
         if strategy == "flat":
             return patch_embeddings.flatten(0, 1)
 
         if strategy.startswith("spatial"):
-            height = width = self.config.vision_config.image_size \
+            height = width = (
+                self.config.vision_config.image_size
                 // self.config.vision_config.patch_size
+            )
 
             base_patch_embeds = patch_embeddings[0]
             if height * width != base_patch_embeds.shape[0]:
                 raise ValueError(
                     "The number of patches is not consistent with the "
-                    "image size.")
+                    "image size."
+                )
 
             if patch_embeddings.shape[0] > 1:
                 other_patch_embeds = patch_embeddings[1:]
@@ -390,37 +438,53 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
                 num_patches = num_patch_height * num_patch_width
 
                 # Image patches might be padded for batch processing
-                other_patch_embeds = other_patch_embeds[:num_patches] \
-                    .view(num_patch_height, num_patch_width, height, width, -1)
+                other_patch_embeds = other_patch_embeds[:num_patches].view(
+                    num_patch_height, num_patch_width, height, width, -1
+                )
 
                 if "unpad" in strategy:
-                    other_patch_embeds = other_patch_embeds \
-                        .permute(4, 0, 2, 1, 3).contiguous() \
-                        .flatten(1, 2).flatten(2, 3)
-                    other_patch_embeds = unpad_image(other_patch_embeds,
-                                                     (orig_height, orig_width))
-                    other_patch_embeds = torch.cat((
-                        other_patch_embeds,
-                        self.image_newline[:, None, None] \
-                            .expand(*other_patch_embeds.shape[:-1], 1) \
+                    other_patch_embeds = (
+                        other_patch_embeds.permute(4, 0, 2, 1, 3)
+                        .contiguous()
+                        .flatten(1, 2)
+                        .flatten(2, 3)
+                    )
+                    other_patch_embeds = unpad_image(
+                        other_patch_embeds, (orig_height, orig_width)
+                    )
+                    other_patch_embeds = torch.cat(
+                        (
+                            other_patch_embeds,
+                            self.image_newline[:, None, None]
+                            .expand(*other_patch_embeds.shape[:-1], 1)
                             .to(other_patch_embeds.device),
-                    ), dim=-1)
-                    other_patch_embeds = other_patch_embeds \
-                        .flatten(1, 2).transpose(0, 1)
+                        ),
+                        dim=-1,
+                    )
+                    other_patch_embeds = other_patch_embeds.flatten(
+                        1, 2
+                    ).transpose(0, 1)
                 else:
-                    other_patch_embeds = other_patch_embeds \
-                        .permute(0, 2, 1, 3, 4).contiguous() \
+                    other_patch_embeds = (
+                        other_patch_embeds.permute(0, 2, 1, 3, 4)
+                        .contiguous()
                         .flatten(0, 3)
+                    )
 
                 merged_patch_embeddings = torch.cat(
-                    (base_patch_embeds, other_patch_embeds), dim=0)
+                    (base_patch_embeds, other_patch_embeds), dim=0
+                )
             else:
                 if "unpad" in strategy:
                     merged_patch_embeddings = torch.cat(
-                        (base_patch_embeds,
-                         self.image_newline[None] \
-                            .to(base_patch_embeds.device)
-                    ), dim=0)
+                        (
+                            base_patch_embeds,
+                            self.image_newline[None].to(
+                                base_patch_embeds.device
+                            ),
+                        ),
+                        dim=0,
+                    )
                 else:
                     merged_patch_embeddings = base_patch_embeds
 
@@ -440,20 +504,26 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
             b, num_patches, c, h, w = pixel_values.shape
             stacked_pixel_values = pixel_values.view(b * num_patches, c, h, w)
             stacked_image_features = self._image_pixels_to_features(
-                self.vision_tower, stacked_pixel_values)
+                self.vision_tower, stacked_pixel_values
+            )
             stacked_patch_embeddings = self.multi_modal_projector(
-                stacked_image_features)
+                stacked_image_features
+            )
 
             return stacked_patch_embeddings.view(
-                b, num_patches, *stacked_patch_embeddings.shape[1:])
+                b, num_patches, *stacked_patch_embeddings.shape[1:]
+            )
 
         num_patches_per_batch = [v.shape[0] for v in pixel_values]
         stacked_pixel_values = torch.cat(pixel_values)
         stacked_image_features = self._image_pixels_to_features(
-            self.vision_tower, stacked_pixel_values)
+            self.vision_tower, stacked_pixel_values
+        )
 
-        return torch.split(self.multi_modal_projector(stacked_image_features),
-                           num_patches_per_batch)
+        return torch.split(
+            self.multi_modal_projector(stacked_image_features),
+            num_patches_per_batch,
+        )
 
     def _process_image_input(
         self,
@@ -469,13 +539,14 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
             batch_size = len(image_input["data"])
             vision_config = self.config.vision_config
             default_height = default_width = vision_config.image_size
-            image_sizes = torch.as_tensor([[default_height, default_width]
-                                           for _ in range(batch_size)])
+            image_sizes = torch.as_tensor(
+                [[default_height, default_width] for _ in range(batch_size)]
+            )
 
         return [
-            self._merge_image_patch_embeddings(image_sizes[i],
-                                               patch_features_batch,
-                                               strategy="spatial_unpad")
+            self._merge_image_patch_embeddings(
+                image_sizes[i], patch_features_batch, strategy="spatial_unpad"
+            )
             for i, patch_features_batch in enumerate(patch_embeddings)
         ]
 
@@ -493,7 +564,6 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         input_ids: torch.Tensor,
         multimodal_embeddings: Optional[NestedTensors] = None,
     ) -> torch.Tensor:
-
         if multimodal_embeddings is None:
             return self.language_model.get_input_embeddings(input_ids)
 
@@ -564,14 +634,17 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         # condition is for v0 compatibility.
         elif inputs_embeds is None:
             vision_embeddings = self.get_multimodal_embeddings(**kwargs)
-            inputs_embeds = self.get_input_embeddings(input_ids,
-                                                      vision_embeddings)
+            inputs_embeds = self.get_input_embeddings(
+                input_ids, vision_embeddings
+            )
             input_ids = None
 
-        hidden_states = self.language_model.model(input_ids,
-                                                  positions,
-                                                  intermediate_tensors,
-                                                  inputs_embeds=inputs_embeds)
+        hidden_states = self.language_model.model(
+            input_ids,
+            positions,
+            intermediate_tensors,
+            inputs_embeds=inputs_embeds,
+        )
         return hidden_states
 
     def compute_logits(
@@ -579,8 +652,9 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
         hidden_states: torch.Tensor,
         sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
-        return self.language_model.compute_logits(hidden_states,
-                                                  sampling_metadata)
+        return self.language_model.compute_logits(
+            hidden_states, sampling_metadata
+        )
 
     def sample(
         self,
@@ -589,7 +663,11 @@ class LlavaNextForConditionalGeneration(nn.Module, SupportsMultiModal,
     ) -> Optional[SamplerOutput]:
         return self.language_model.sample(logits, sampling_metadata)
 
-    def load_weights(self, weights: Iterable[Tuple[str,
-                                                   torch.Tensor]]) -> Set[str]:
-        loader = AutoWeightsLoader(self)
+    def load_weights(
+        self, weights: Iterable[Tuple[str, torch.Tensor]]
+    ) -> Set[str]:
+        loader = AutoWeightsLoader(
+            self,
+            ignore_unexpected_prefixes=["score_head"],
+        )
         return loader.load_weights(weights)
